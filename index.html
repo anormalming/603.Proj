@@ -125,16 +125,6 @@
         .admin-input {
             width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 10px;
         }
-        
-        .loading-spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 2s linear infinite;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -242,7 +232,7 @@
     let user = null;
     let isMenuOpen = false, isQuizActive = false, isGameOver = false;
 
-    // --- 初始化驗證 (RULE 3) ---
+    // --- 初始化驗證 ---
     const initAuth = async () => {
         try {
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -263,11 +253,9 @@
         }
     });
 
-    // --- 資料同步 (RULE 1 & 2) ---
+    // --- 資料同步 ---
     function startSyncing() {
         if (!user) return;
-        
-        // 監聽公共課程資料
         const lessonsCol = collection(db, 'artifacts', appId, 'public', 'data', 'lessons');
         
         onSnapshot(lessonsCol, (snapshot) => {
@@ -276,7 +264,6 @@
                 newData[doc.id] = doc.data();
             });
             
-            // 如果是第一次載入且沒有資料，初始化預設題目
             if (Object.keys(newData).length === 0) {
                 initDefaultData();
                 return;
@@ -284,7 +271,6 @@
 
             lessonData = newData;
             
-            // 如果目前沒選課程，選第一個
             if (!activeLessonId || !lessonData[activeLessonId]) {
                 activeLessonId = Object.keys(lessonData)[0];
             }
@@ -294,7 +280,6 @@
             if (document.getElementById('admin-controls').style.display === 'block') {
                 refreshAdminLessonUI();
             }
-            // 只有在非遊戲進行中或初次載入才重置
             if (!isQuizActive && !isGameOver) resetGame();
         }, (error) => {
             console.error("Sync error", error);
@@ -310,7 +295,7 @@
         });
     }
 
-    // --- 管理者操作 (寫入雲端) ---
+    // --- 管理者操作 ---
     window.authAdmin = function() {
         if (document.getElementById('admin-password').value === 'XU3TP6BJO4') {
             document.getElementById('admin-auth-section').style.display = 'none';
@@ -336,7 +321,7 @@
     };
 
     window.deleteLesson = async function(id) {
-        if (!user || !confirm('確定要從雲端刪除此課程嗎？所有玩家將無法再看到。')) return;
+        if (!user || !confirm('確定要從雲端刪除此課程嗎？')) return;
         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'lessons', id);
         await deleteDoc(ref);
     };
@@ -358,14 +343,14 @@
             quizzes: arrayUnion({ q: qText, options: opts, correct: 0 })
         });
         
-        alert('題目已成功發布至雲端！');
+        alert('題目已成功發布！');
         document.getElementById('q-text').value = '';
     };
 
-    // --- UI 更新 ---
     function refreshAdminLessonUI() {
         const manager = document.getElementById('admin-lesson-manager');
         const select = document.getElementById('q-lesson-target');
+        if(!manager || !select) return;
         manager.innerHTML = ''; select.innerHTML = '';
         Object.keys(lessonData).forEach(id => {
             const item = document.createElement('div');
@@ -380,6 +365,7 @@
 
     function refreshPlayerMenuUI() {
         const list = document.getElementById('lesson-list');
+        if(!list) return;
         list.innerHTML = '';
         Object.keys(lessonData).forEach(id => {
             const btn = document.createElement('button');
@@ -396,16 +382,17 @@
     }
 
     function updateBadge() {
-        document.getElementById('current-lesson-badge').innerText = activeLessonId ? lessonData[activeLessonId].name : "載入中...";
+        const badge = document.getElementById('current-lesson-badge');
+        if(badge) badge.innerText = activeLessonId ? lessonData[activeLessonId].name : "載入中...";
     }
 
-    // --- 遊戲引擎與渲染 (延續上一版本) ---
+    // --- 遊戲引擎 ---
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     let GRAVITY = 0.6, JUMP_FORCE = -12, BASE_SPEED = 6.5;
     const GROUND_HEIGHT = 70;
     let score = 0, gameSpeed = BASE_SPEED, frameCount = 0, currentQuizIdx = 0;
-    let stickman, obstacles, lightWalls;
+    let stickman = null, obstacles = [], lightWalls = [];
 
     class Stickman {
         constructor() {
@@ -478,7 +465,7 @@
     };
 
     function gameLoop() {
-        if (isGameOver || isQuizActive || isMenuOpen || !activeLessonId) return;
+        if (isGameOver || isQuizActive || isMenuOpen || !activeLessonId || !stickman) return;
         ctx.clearRect(0,0,canvas.width,canvas.height);
         ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(0, canvas.height-GROUND_HEIGHT); ctx.lineTo(canvas.width, canvas.height-GROUND_HEIGHT); ctx.stroke();
@@ -561,7 +548,8 @@
     resize();
 
     const handleInput = (e) => {
-        if (isQuizActive || isMenuOpen || isGameOver || e.target.closest('#admin-panel') || e.target.closest('button')) return;
+        // 安全檢查：如果 stickman 尚未初始化或遊戲狀態不允許輸入，則跳過
+        if (!stickman || isQuizActive || isMenuOpen || isGameOver || e.target.closest('#admin-panel') || e.target.closest('button')) return;
         stickman.jump();
         if(e.cancelable) e.preventDefault();
     };
