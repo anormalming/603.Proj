@@ -227,8 +227,13 @@
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'stickman-runner-pro';
 
     // 遊戲狀態與變數
-    let lessonData = {};
-    let activeLessonId = null;
+    let lessonData = {
+        "local_temp": {
+            name: "離線預載課程",
+            quizzes: [{ q: "正在載入雲端資料，請先暖身：1+1=？", options: ["2", "3", "4", "5"], correct: 0 }]
+        }
+    };
+    let activeLessonId = "local_temp";
     let user = null;
     let isMenuOpen = false, isQuizActive = false, isGameOver = false;
 
@@ -242,6 +247,9 @@
             }
         } catch (error) {
             console.error("Auth error", error);
+            // 認證失敗時仍允許玩家使用本地預設資料
+            updateBadge();
+            resetGame();
         }
     };
     initAuth();
@@ -271,7 +279,8 @@
 
             lessonData = newData;
             
-            if (!activeLessonId || !lessonData[activeLessonId]) {
+            // 如果當前是暫存課程或是無效課程，則切換到第一個雲端課程
+            if (activeLessonId === "local_temp" || !lessonData[activeLessonId]) {
                 activeLessonId = Object.keys(lessonData)[0];
             }
             
@@ -280,9 +289,11 @@
             if (document.getElementById('admin-controls').style.display === 'block') {
                 refreshAdminLessonUI();
             }
-            if (!isQuizActive && !isGameOver) resetGame();
+            // 只有在遊戲還沒開始或未在答題時重置
+            if (!isQuizActive && !isGameOver && !stickman) resetGame();
         }, (error) => {
             console.error("Sync error", error);
+            document.getElementById('current-lesson-badge').innerText = "雲端連線失敗 (使用離線模式)";
         });
     }
 
@@ -353,6 +364,7 @@
         if(!manager || !select) return;
         manager.innerHTML = ''; select.innerHTML = '';
         Object.keys(lessonData).forEach(id => {
+            if(id === "local_temp") return;
             const item = document.createElement('div');
             item.className = 'flex items-center gap-2 bg-white p-2 rounded-lg border';
             item.innerHTML = `<input type="text" class="flex-1 text-sm outline-none" value="${lessonData[id].name}" onchange="renameLesson('${id}', this.value)">
@@ -383,7 +395,10 @@
 
     function updateBadge() {
         const badge = document.getElementById('current-lesson-badge');
-        if(badge) badge.innerText = activeLessonId ? lessonData[activeLessonId].name : "載入中...";
+        if(badge) {
+            const name = lessonData[activeLessonId]?.name || "連線中...";
+            badge.innerText = name;
+        }
     }
 
     // --- 遊戲引擎 ---
@@ -458,8 +473,9 @@
         document.getElementById('game-over').classList.add('hidden');
         document.getElementById('win-screen').classList.add('hidden');
         document.getElementById('quiz-overlay').style.display = 'none';
-        const qCount = (activeLessonId && lessonData[activeLessonId]) ? lessonData[activeLessonId].quizzes.length : 0;
-        document.getElementById('progress-display').innerText = `進度: 0/${qCount}`;
+        
+        const bank = lessonData[activeLessonId]?.quizzes || [];
+        document.getElementById('progress-display').innerText = `進度: 0/${bank.length}`;
         document.getElementById('score-display').innerText = '0';
         requestAnimationFrame(gameLoop);
     };
@@ -476,7 +492,10 @@
         }
         lightWalls.forEach((w,i) => {
             w.update(); w.draw();
-            if (stickman.x > w.x + w.w/2) { isQuizActive = true; showQuiz(bank[currentQuizIdx]); }
+            if (stickman.x > w.x + w.w/2) { 
+                isQuizActive = true; 
+                showQuiz(bank[currentQuizIdx]); 
+            }
         });
         if (frameCount % 120 === 0 && lightWalls.length === 0 && frameCount % 600 > 100) {
             obstacles.push(new Obstacle());
@@ -495,20 +514,25 @@
     }
 
     function showQuiz(qData) {
+        if(!qData) {
+            isQuizActive = false;
+            return;
+        }
         document.getElementById('quiz-overlay').style.display = 'flex';
         document.getElementById('quiz-question').innerText = qData.q;
         const container = document.getElementById('quiz-options');
         container.innerHTML = '';
-        const shuffled = qData.options.map((o,i) => ({text:o, correct:i===0})).sort(()=>Math.random()-0.5);
+        const shuffled = qData.options.map((o,i) => ({text:o, correct:i===qData.correct})).sort(()=>Math.random()-0.5);
         shuffled.forEach(item => {
             const b = document.createElement('button'); b.className = 'option-btn'; b.innerText = item.text;
             b.onclick = () => {
                 if (item.correct) {
                     currentQuizIdx++;
-                    document.getElementById('progress-display').innerText = `進度: ${currentQuizIdx}/${lessonData[activeLessonId].quizzes.length}`;
+                    const total = lessonData[activeLessonId].quizzes.length;
+                    document.getElementById('progress-display').innerText = `進度: ${currentQuizIdx}/${total}`;
                     isQuizActive = false; document.getElementById('quiz-overlay').style.display = 'none';
                     lightWalls = [];
-                    if (currentQuizIdx >= lessonData[activeLessonId].quizzes.length) {
+                    if (currentQuizIdx >= total) {
                         isGameOver = true; document.getElementById('win-screen').classList.remove('hidden');
                     } else requestAnimationFrame(gameLoop);
                 } else {
@@ -548,7 +572,6 @@
     resize();
 
     const handleInput = (e) => {
-        // 安全檢查：如果 stickman 尚未初始化或遊戲狀態不允許輸入，則跳過
         if (!stickman || isQuizActive || isMenuOpen || isGameOver || e.target.closest('#admin-panel') || e.target.closest('button')) return;
         stickman.jump();
         if(e.cancelable) e.preventDefault();
@@ -556,6 +579,12 @@
     window.addEventListener('keydown', (e) => { if(e.code === 'Space') handleInput(e); });
     window.addEventListener('touchstart', handleInput, {passive:false});
     window.addEventListener('mousedown', (e) => { if(e.button === 0) handleInput(e); });
+
+    // 初始載入（確保即便沒連上網也能看到畫面）
+    window.onload = () => {
+        updateBadge();
+        resetGame();
+    };
 
 </script>
 </body>
